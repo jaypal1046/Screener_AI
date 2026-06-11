@@ -1,0 +1,29 @@
+{
+  "name": "stocklens-extension",
+  "version": "1.0.0",
+  "description": "Chrome/Edge extension for pure-math stock technical analysis",
+  "private": true,
+  "scripts": {
+    "build:wasm": "cd rust-indicators && wasm-pack build --target web --out-dir ../public/stocklens-wasm/pkg --out-name stocklens_wasm",
+    "build:js": "tsc && esbuild src/content.ts src/background.ts src/popup.ts --bundle --outdir=public --minify --format=esm",
+    "build": "npm run build:wasm && npm run build:js",
+    "dev": "tsc --watch & esbuild src/*.ts --bundle --outdir=public --format=esm --watch",
+    "clean": "rm -rf public/*.js public/*.wasm",
+    "test": "echo \"No tests yet\""
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.260",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "keywords": [
+    "chrome-extension",
+    "stock-analysis",
+    "technical-analysis",
+    "trading",
+    "wasm",
+    "rust"
+  ],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "stocklens-wasm",
+  "version": "0.1.0",
+  "description": "StockLens WebAssembly indicator module",
+  "type": "module",
+  "main": "stocklens_wasm.js",
+  "types": "stocklens_wasm.d.ts",
+  "files": [
+    "stocklens_wasm.js",
+    "stocklens_wasm.wasm",
+    "stocklens_wasm.d.ts"
+  ]
+}
