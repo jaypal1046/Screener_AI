@@ -1,0 +1,44 @@
+```
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+target/
+
+# Rust/WASM artifacts
+**/*.rs.bk
+Cargo.lock
+
+# TypeScript/JavaScript compiled files
+*.js.map
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Package manager
+package-lock.json
+yarn.lock
+
+# Temporary files
+*.tmp
+*.temp
+```

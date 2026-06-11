@@ -1,0 +1,1 @@
+// StockLens Popup - minimal placeholder
