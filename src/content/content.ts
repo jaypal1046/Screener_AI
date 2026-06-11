@@ -1,6 +1,14 @@
 /**
  * StockLens Content Script
  * Injected into supported pages to detect tickers and show analysis overlay
+ * 
+ * AUTO-DETECTION FLOW:
+ * 1. Runs immediately on page load (document_idle)
+ * 2. Checks if current platform is supported
+ * 3. Shows overlay with loading state instantly
+ * 4. Detects ticker from DOM patterns
+ * 5. Fetches data and displays analysis
+ * 6. Monitors for navigation/ticker changes
  */
 
 import { StockLensOverlay } from '../ui/overlay';
@@ -15,6 +23,9 @@ class StockLensContentScript {
   private currentTimeframe: Timeframe = '1D';
   private scanInterval: number | null = null;
   private initialized = false;
+  private retryCount = 0;
+  private readonly MAX_RETRIES = 5;
+  private readonly RETRY_DELAY_MS = 1000;
 
   constructor() {
     this.detector = new TickerDetector();
@@ -34,9 +45,10 @@ class StockLensContentScript {
       return;
     }
 
-    // Create overlay
+    // Create overlay immediately with loading state
     this.overlay = new StockLensOverlay();
     this.overlay.attach();
+    this.overlay.showLoading('Detecting ticker...');
 
     // Listen for timeframe changes from overlay
     window.addEventListener('stocklens-timeframe-change', (e: any) => {
@@ -46,8 +58,16 @@ class StockLensContentScript {
       }
     });
 
-    // Start monitoring for ticker changes
+    // Start monitoring for ticker changes with retry logic
     this.startTickerMonitoring();
+    
+    // Listen for visibility changes (tab switch back)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.currentTicker) {
+        console.log('[StockLens] Tab became visible, refreshing data');
+        this.scanTicker(this.currentTicker);
+      }
+    });
   }
 
   private startTickerMonitoring(): void {
@@ -57,11 +77,15 @@ class StockLensContentScript {
       if (detectedTicker && detectedTicker !== this.currentTicker) {
         console.log('[StockLens] Ticker detected:', detectedTicker);
         this.currentTicker = detectedTicker;
+        this.retryCount = 0; // Reset on successful detection
         this.scanTicker(detectedTicker);
       } else if (!detectedTicker && this.currentTicker) {
         console.log('[StockLens] Ticker no longer visible');
         this.currentTicker = null;
         this.overlay?.showError('No ticker detected');
+      } else if (!detectedTicker && !this.currentTicker) {
+        // Retry detection for slow-loading pages
+        this.handleFailedDetection();
       }
     };
 
@@ -76,6 +100,8 @@ class StockLensContentScript {
     const urlObserver = new MutationObserver(() => {
       if (window.location.href !== lastUrl) {
         lastUrl = window.location.href;
+        console.log('[StockLens] URL changed, resetting detection');
+        this.retryCount = 0;
         setTimeout(checkTicker, 500); // Small delay for SPA rendering
       }
     });
@@ -84,6 +110,24 @@ class StockLensContentScript {
       childList: true,
       subtree: true
     });
+    
+    // Listen for popstate (browser back/forward)
+    window.addEventListener('popstate', () => {
+      console.log('[StockLens] Navigation detected, resetting');
+      this.retryCount = 0;
+      setTimeout(checkTicker, 500);
+    });
+  }
+  
+  private handleFailedDetection(): void {
+    if (this.retryCount < this.MAX_RETRIES) {
+      this.retryCount++;
+      this.overlay?.showLoading(`Detecting ticker... (${this.retryCount}/${this.MAX_RETRIES})`);
+      console.log(`[StockLens] Retry ${this.retryCount}/${this.MAX_RETRIES}`);
+    } else {
+      console.warn('[StockLens] Max retries reached');
+      this.overlay?.showError('Could not auto-detect ticker. Please refresh or navigate to a stock page.');
+    }
   }
 
   private detectTicker(): string | null {
@@ -94,7 +138,7 @@ class StockLensContentScript {
   private async scanTicker(ticker: string): Promise<void> {
     if (!this.overlay) return;
 
-    this.overlay.showLoading();
+    this.overlay.showLoading(`Analyzing ${ticker}...`);
 
     try {
       // Fetch OHLCV data from Yahoo Finance
@@ -128,10 +172,12 @@ class StockLensContentScript {
 
       // Check for alerts
       this.checkAlerts(report);
+      
+      console.log(`[StockLens] Analysis complete for ${ticker}`);
 
     } catch (error) {
       console.error('[StockLens] Scan error:', error);
-      this.overlay.showError('Failed to analyze. Try refreshing.');
+      this.overlay.showError(`Failed to analyze ${ticker}. Try refreshing.`);
     }
   }
 

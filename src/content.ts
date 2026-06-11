@@ -1,6 +1,14 @@
 /**
  * StockLens Content Script
  * Main entry point for the extension on supported pages
+ * 
+ * AUTO-DETECTION FLOW:
+ * 1. Runs immediately on page load (document_idle)
+ * 2. Checks if current platform is supported
+ * 3. Shows overlay with loading state instantly
+ * 4. Detects ticker from DOM patterns
+ * 5. Fetches data and displays analysis
+ * 6. Monitors for navigation/ticker changes
  */
 
 import { TickerDetector } from './detectors/TickerDetector';
@@ -16,6 +24,10 @@ class StockLensContentScript {
   private overlay: StockLensOverlay | null = null;
   private currentTicker: string | null = null;
   private scanInterval: number | null = null;
+  private navigationObserver: MutationObserver | null = null;
+  private retryCount = 0;
+  private readonly MAX_RETRIES = 5;
+  private readonly RETRY_DELAY_MS = 1000;
 
   constructor() {
     this.detector = new TickerDetector();
@@ -32,20 +44,58 @@ class StockLensContentScript {
       return;
     }
 
-    // Initialize overlay
+    console.log('[StockLens] Supported platform detected, initializing...');
+
+    // Initialize overlay immediately with loading state
     this.overlay = new StockLensOverlay();
     this.overlay.attach();
+    this.overlay.showLoading('Detecting ticker...');
 
-    // Initial scan
-    await this.scan();
+    // Initial scan with retry logic
+    await this.scanWithRetry();
 
-    // Set up periodic rescans (every 60 seconds)
+    // Set up periodic rescans (every 60 seconds) for price updates
     this.scanInterval = window.setInterval(() => this.scan(), 60000);
 
     // Listen for URL changes (SPA navigation)
     this.setupNavigationListener();
 
+    // Listen for visibility changes (tab switch back)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.currentTicker) {
+        console.log('[StockLens] Tab became visible, refreshing data');
+        this.scan();
+      }
+    });
+
     console.log('[StockLens] Ready - scanning active');
+  }
+
+  /**
+   * Scan with retry logic for slow-loading pages
+   */
+  private async scanWithRetry() {
+    const detection = this.detector.detect();
+    
+    if (!detection) {
+      console.log(`[StockLens] Could not detect ticker (attempt ${this.retryCount + 1}/${this.MAX_RETRIES})`);
+      
+      if (this.retryCount < this.MAX_RETRIES) {
+        this.retryCount++;
+        this.overlay?.showLoading(`Detecting ticker... (${this.retryCount}/${this.MAX_RETRIES})`);
+        
+        // Retry with exponential backoff
+        setTimeout(() => this.scanWithRetry(), this.RETRY_DELAY_MS * this.retryCount);
+      } else {
+        console.warn('[StockLens] Max retries reached, showing manual input option');
+        this.overlay?.showError('Could not auto-detect ticker. Please refresh or navigate to a stock page.');
+      }
+      return;
+    }
+
+    // Reset retry count on success
+    this.retryCount = 0;
+    await this.scan();
   }
 
   private async scan() {
@@ -53,23 +103,29 @@ class StockLensContentScript {
     
     if (!detection) {
       console.log('[StockLens] Could not detect ticker');
-      this.updateOverlay([], null);
+      if (this.currentTicker) {
+        // Ticker was detected before but now isn't - user might have navigated away
+        this.updateOverlay([], null);
+      }
       return;
     }
 
-    // Skip if same ticker
+    // Skip if same ticker (no change)
     if (detection.ticker === this.currentTicker) {
       return;
     }
 
     this.currentTicker = detection.ticker;
-    console.log(`[StockLens] Scanning ${detection.ticker} on ${detection.platform}`);
+    console.log(`[StockLens] Scanning ${detection.ticker} on ${detection.platform} (${detection.exchange})`);
 
     try {
+      // Show loading state with ticker name
+      this.overlay?.showLoading(`Analyzing ${detection.ticker}...`);
+
       // Fetch multi-timeframe data
       const ohlcvData = await this.dataService.fetchMultiTimeframe(
         detection.ticker,
-        detection.exchange === 'NSE' ? 'NS' : 'NS'
+        detection.exchange === 'NSE' ? 'NS' : detection.exchange === 'BSE' ? 'BO' : 'NS'
       );
 
       // Generate scan reports for each timeframe
@@ -82,6 +138,10 @@ class StockLensContentScript {
         reports.push(report);
       }
 
+      if (reports.length === 0) {
+        throw new Error('No data available for any timeframe');
+      }
+
       // Calculate consensus and setup
       const latestPrice = ohlcvData['1D']?.[ohlcvData['1D'].length - 1]?.close || 0;
       const setupCard = this.smartEngine.generateAutoSetup(reports, latestPrice);
@@ -89,9 +149,11 @@ class StockLensContentScript {
       // Update overlay
       this.updateOverlay(reports, setupCard);
 
+      console.log(`[StockLens] Analysis complete for ${detection.ticker}`);
+
     } catch (error) {
       console.error('[StockLens] Scan error:', error);
-      this.updateOverlay([], null);
+      this.overlay?.showError(`Failed to analyze ${detection.ticker}. Try refreshing.`);
     }
   }
 
@@ -220,7 +282,9 @@ class StockLensContentScript {
       if (currentUrl !== lastUrl) {
         lastUrl = currentUrl;
         console.log('[StockLens] URL changed, rescanning...');
-        setTimeout(() => this.scan(), 1000);
+        // Reset retry count for new page
+        this.retryCount = 0;
+        setTimeout(() => this.scanWithRetry(), 1000);
       }
     });
 
@@ -232,7 +296,8 @@ class StockLensContentScript {
     // Also listen for popstate (browser back/forward)
     window.addEventListener('popstate', () => {
       console.log('[StockLens] Navigation detected, rescanning...');
-      setTimeout(() => this.scan(), 1000);
+      this.retryCount = 0;
+      setTimeout(() => this.scanWithRetry(), 1000);
     });
   }
 
