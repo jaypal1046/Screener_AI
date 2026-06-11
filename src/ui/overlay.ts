@@ -448,10 +448,18 @@ export class StockLensOverlay {
     });
   }
 
-  public showLoading() {
+  public showLoading(message?: string) {
     this.currentReports = [];
     this.setupCard = null;
     this.render();
+    
+    // Update loading message if provided
+    if (message) {
+      const loadingDiv = this.shadow.querySelector('.signals-list');
+      if (loadingDiv) {
+        loadingDiv.innerHTML = `<div style="text-align:center;padding:20px;color:#64748b;">${message}</div>`;
+      }
+    }
   }
 
   public showError(message: string) {
