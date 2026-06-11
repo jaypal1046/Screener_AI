@@ -22,7 +22,7 @@ export class TickerDetector {
       cleanFn: (text: string) => text.replace(/[^A-Z0-9\-]/g, '').toUpperCase()
     },
     groww: {
-      urlPattern: /groww\.io/,
+      urlPattern: /groww\.(in|io)/,
       selectors: [
         'h1.stock-name',
         '.stock-detail-header h1',
@@ -83,6 +83,30 @@ export class TickerDetector {
     if (!platform) {
       console.log('[StockLens] Unsupported platform');
       return null;
+    }
+
+    // Check for symbol - exchange badge first (highly accurate for Indian stock sites like Groww, Zerodha, NSE)
+    try {
+      const badges = document.querySelectorAll('div, span, p, h1, h2, h3, a');
+      for (const badge of Array.from(badges)) {
+        const text = badge.textContent?.trim() || '';
+        // Look for patterns like "BANKINDIA - NSE" or "RELIANCE - BSE"
+        const match = text.match(/^([A-Z0-9]+)\s*-\s*(NSE|BSE)$/i);
+        if (match) {
+          const symbol = match[1].toUpperCase();
+          if (symbol.length >= 2 && symbol.length <= 10) {
+            console.log(`[StockLens] Badge match found: ${symbol} on ${match[2]}`);
+            return {
+              ticker: symbol,
+              exchange: match[2].toUpperCase(),
+              confidence: 0.95,
+              platform
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[StockLens] Error scanning for badges:', e);
     }
 
     const config = TickerDetector.PLATFORM_PATTERNS[platform as keyof typeof TickerDetector.PLATFORM_PATTERNS];

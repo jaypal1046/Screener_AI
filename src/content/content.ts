@@ -6,76 +6,18 @@
 import { StockLensOverlay } from '../ui/overlay';
 import { runScanner, initializeEngine, analyzeMTFConfluence } from '../engine/analysis_engine';
 import { Timeframe, ScanReport } from '../engine/types';
-
-// Supported sites and their ticker detection patterns
-const SITE_DETECTORS: Record<string, (doc: Document) => string | null> = {
-  'in.tradingview.com': (doc) => {
-    // TradingView: Look for symbol in header or URL
-    const urlMatch = window.location.pathname.match(/\/charts\/([A-Z0-9.:]+)/i);
-    if (urlMatch) return urlMatch[1].split(':')[0];
-    
-    const titleEl = doc.querySelector('h1[data-symbol-title]');
-    if (titleEl) return titleEl.getAttribute('data-symbol-title');
-    
-    return null;
-  },
-  
-  'groww.in': (doc) => {
-    // Groww: Look for stock name/symbol in header
-    const h1 = doc.querySelector('h1');
-    if (h1) {
-      const text = h1.textContent?.trim() || '';
-      const match = text.match(/([A-Z]+)/);
-      if (match) return match[1];
-    }
-    return null;
-  },
-  
-  'zerodha.com': (doc) => {
-    // Zerodha Kite: Look for instrument in header
-    const h1 = doc.querySelector('.instrument-name');
-    if (h1) {
-      const text = h1.textContent?.trim() || '';
-      const match = text.match(/([A-Z]+)/);
-      if (match) return match[1];
-    }
-    return null;
-  },
-  
-  'nseindia.com': (doc) => {
-    // NSE India: Look for quote symbol
-    const h1 = doc.querySelector('h1');
-    if (h1) {
-      const text = h1.textContent?.trim() || '';
-      const match = text.match(/([A-Z]+)/);
-      if (match) return match[1];
-    }
-    return null;
-  },
-  
-  'finance.yahoo.com': (doc) => {
-    // Yahoo Finance: Symbol is usually in URL or h1
-    const urlMatch = window.location.pathname.match(/\/quote\/([A-Z0-9.-]+)/i);
-    if (urlMatch) return urlMatch[1];
-    
-    const h1 = doc.querySelector('h1');
-    if (h1) {
-      const text = h1.textContent?.trim() || '';
-      const match = text.match(/([A-Z0-9.-]+)/);
-      if (match) return match[1];
-    }
-    return null;
-  }
-};
+import { TickerDetector } from '../detectors/TickerDetector';
 
 class StockLensContentScript {
   private overlay: StockLensOverlay | null = null;
+  private detector: TickerDetector;
   private currentTicker: string | null = null;
   private currentTimeframe: Timeframe = '1D';
   private scanInterval: number | null = null;
   private initialized = false;
 
   constructor() {
+    this.detector = new TickerDetector();
     this.init();
   }
 
@@ -145,16 +87,8 @@ class StockLensContentScript {
   }
 
   private detectTicker(): string | null {
-    const hostname = window.location.hostname;
-    
-    // Find matching detector
-    for (const [domain, detector] of Object.entries(SITE_DETECTORS)) {
-      if (hostname.includes(domain)) {
-        return detector(document);
-      }
-    }
-
-    return null;
+    const detection = this.detector.detect();
+    return detection ? detection.ticker : null;
   }
 
   private async scanTicker(ticker: string): Promise<void> {

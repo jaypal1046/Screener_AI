@@ -5,14 +5,15 @@
   "private": true,
   "scripts": {
     "build:wasm": "cd rust-indicators && wasm-pack build --target web --out-dir ../public/stocklens-wasm/pkg --out-name stocklens_wasm",
-    "build:js": "tsc && esbuild src/content.ts src/background.ts src/popup.ts --bundle --outdir=public --minify --format=esm",
+    "build:js": "tsc && esbuild src/content/content.ts --bundle --outfile=public/content.js --minify --format=esm && esbuild src/background/background.ts --bundle --outfile=public/background.js --minify --format=esm && esbuild src/popup.ts --bundle --outfile=public/popup.js --minify --format=esm",
     "build": "npm run build:wasm && npm run build:js",
-    "dev": "tsc --watch & esbuild src/*.ts --bundle --outdir=public --format=esm --watch",
+    "dev": "concurrently \"tsc --watch\" \"esbuild src/content/content.ts --bundle --outfile=public/content.js --format=esm --watch\" \"esbuild src/background/background.ts --bundle --outfile=public/background.js --format=esm --watch\" \"esbuild src/popup.ts --bundle --outfile=public/popup.js --format=esm --watch\"",
     "clean": "rm -rf public/*.js public/*.wasm",
     "test": "echo \"No tests yet\""
   },
   "devDependencies": {
     "@types/chrome": "^0.0.260",
+    "concurrently": "^8.2.2",
     "esbuild": "^0.20.0",
     "typescript": "^5.3.0"
   },
