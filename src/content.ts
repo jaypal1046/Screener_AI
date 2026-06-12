@@ -7,6 +7,7 @@ import { TickerDetector } from './detectors/TickerDetector';
 import { YahooFinanceService } from './services/YahooFinanceService';
 import { SmartEngine } from './engine/SmartEngine';
 import { StockLensOverlay } from './ui/overlay';
+import { ScreenerManager, ScreenerUI } from './screener';
 import { ScanReport, SetupCard, Timeframe, OHLCV, SignalResult, ScanReportMetadata } from './engine/types';
 
 class StockLensContentScript {
@@ -14,6 +15,9 @@ class StockLensContentScript {
   private dataService: YahooFinanceService;
   private smartEngine: SmartEngine;
   private overlay: StockLensOverlay | null = null;
+  private screenerManager: ScreenerManager | null = null;
+  private screenerUI: ScreenerUI | null = null;
+  private currentPageId: string | null = null;
   private currentTicker: string | null = null;
   private scanInterval: number | null = null;
 
@@ -21,8 +25,10 @@ class StockLensContentScript {
     this.detector = new TickerDetector();
     this.dataService = new YahooFinanceService();
     this.smartEngine = new SmartEngine();
-    
-    console.log('[StockLens] Content script initialized');
+    this.screenerManager = new ScreenerManager();
+    this.screenerUI = new ScreenerUI();
+
+    console.log('[StockLens] Content script initialized with Screener');
   }
 
   public async init() {
@@ -36,6 +42,12 @@ class StockLensContentScript {
     this.overlay = new StockLensOverlay();
     this.overlay.attach();
 
+    // Initialize screener UI
+    if (this.screenerUI) {
+      this.screenerUI.attach();
+      this.screenerUI.setOnScreenerAction((action, data) => this.handleScreenerAction(action, data));
+    }
+
     // Initial scan
     await this.scan();
 
@@ -45,7 +57,7 @@ class StockLensContentScript {
     // Listen for URL changes (SPA navigation)
     this.setupNavigationListener();
 
-    console.log('[StockLens] Ready - scanning active');
+    console.log('[StockLens] Ready - scanning active with Screener');
   }
 
   private async scan() {
@@ -88,6 +100,9 @@ class StockLensContentScript {
 
       // Update overlay
       this.updateOverlay(reports, setupCard);
+
+      // Register with screener manager for multi-tab scanning
+      this.registerCurrentPage(detection, ohlcvData, reports[0]);
 
     } catch (error) {
       console.error('[StockLens] Scan error:', error);
@@ -236,12 +251,135 @@ class StockLensContentScript {
     });
   }
 
+  /**
+   * Handle screener UI actions
+   */
+  private handleScreenerAction(action: string, data?: any) {
+    console.log(`[StockLens] Screener action: ${action}`, data);
+
+    switch (action) {
+      case 'new_screener':
+        this.createDemoScreener();
+        break;
+      case 'export_csv':
+        this.exportScreenerResults();
+        break;
+      case 'select_stock':
+        // Could navigate to the selected stock or highlight it
+        console.log(`[StockLens] Selected stock: ${data?.ticker}`);
+        break;
+    }
+  }
+
+  /**
+   * Create a demo screener with common conditions
+   */
+  private createDemoScreener() {
+    if (!this.screenerManager) return;
+
+    const conditions: import('./screener').FilterCondition[] = [
+      {
+        indicator: 'rsi',
+        operator: 'lt',
+        value: 30,
+        timeframe: '1D',
+        category: 'momentum'
+      },
+      {
+        indicator: 'volume_spike',
+        operator: 'gt',
+        value: 1.5,
+        timeframe: '1D',
+        category: 'volume'
+      },
+      {
+        indicator: 'ma_crossover',
+        operator: 'gt',
+        value: 0,
+        timeframe: '1D',
+        category: 'trend'
+      }
+    ];
+
+    this.screenerManager.createScreener('Momentum Breakout', conditions);
+    
+    // Show the screener UI
+    if (this.screenerUI) {
+      this.screenerUI.show();
+      
+      // Run the screener and update UI
+      const results = this.screenerManager.runScreener(
+        this.screenerManager.getAllScreeners()[0]?.id || ''
+      );
+      const screeners = this.screenerManager.getAllScreeners();
+      this.screenerUI.updateResults(results, screeners);
+    }
+  }
+
+  /**
+   * Export screener results to CSV
+   */
+  private exportScreenerResults() {
+    if (!this.screenerManager) return;
+
+    const screeners = this.screenerManager.getAllScreeners();
+    if (screeners.length === 0) {
+      alert('No screeners available to export');
+      return;
+    }
+
+    const csvContent = this.screenerManager.exportToCSV(screeners[0].id);
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stocklens_screener_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Register current page with screener manager
+   */
+  private registerCurrentPage(detection: any, ohlcvData: Record<Timeframe, OHLCV[]>, report: ScanReport) {
+    if (!this.screenerManager) return;
+
+    const pageId = `${detection.ticker}_${Date.now()}`;
+    this.currentPageId = pageId;
+
+    const stockPage: import('./screener').StockPage = {
+      id: pageId,
+      ticker: detection.ticker,
+      exchange: detection.exchange,
+      url: window.location.href,
+      lastUpdated: Date.now(),
+      status: 'ready',
+      report,
+      ohlcvData
+    };
+
+    this.screenerManager.addStockPage(stockPage);
+    this.screenerManager.updateStockPageData(pageId, ohlcvData, report);
+
+    // Update screener UI if visible
+    if (this.screenerUI && this.screenerManager.getAllScreeners().length > 0) {
+      const results = this.screenerManager.runAllScreeners();
+      const allResults: import('./screener').ScreenerResult[] = [];
+      results.forEach(r => allResults.push(...r));
+      const screeners = this.screenerManager.getAllScreeners();
+      this.screenerUI.updateResults(allResults, screeners);
+    }
+  }
+
   public destroy() {
     if (this.scanInterval) {
       clearInterval(this.scanInterval);
     }
     if (this.overlay) {
       this.overlay.detach();
+    }
+    if (this.screenerUI) {
+      this.screenerUI.detach();
     }
   }
 }
