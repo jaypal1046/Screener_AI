@@ -1,23 +1,33 @@
 /**
  * StockLens Content Script
  * Injected into supported pages to detect tickers and show analysis overlay
+ * Now includes Multi-Tab Screener functionality
  */
 
 import { StockLensOverlay } from '../ui/overlay';
 import { runScanner, initializeEngine, analyzeMTFConfluence } from '../engine/analysis_engine';
 import { Timeframe, ScanReport } from '../engine/types';
 import { TickerDetector } from '../detectors/TickerDetector';
+import { ScreenerManager, ScreenerUI, ScreenerBuilderUI, ScreenerBuilderConfig } from '../screener';
 
 class StockLensContentScript {
   private overlay: StockLensOverlay | null = null;
   private detector: TickerDetector;
+  private screenerManager: ScreenerManager;
+  private screenerUI: ScreenerUI;
+  private screenerBuilder: ScreenerBuilderUI;
   private currentTicker: string | null = null;
   private currentTimeframe: Timeframe = '1D';
   private scanInterval: number | null = null;
   private initialized = false;
+  private pageId: string;
 
   constructor() {
     this.detector = new TickerDetector();
+    this.pageId = `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    this.screenerManager = new ScreenerManager();
+    this.screenerUI = new ScreenerUI();
+    this.screenerBuilder = new ScreenerBuilderUI();
     this.init();
   }
 
@@ -38,12 +48,22 @@ class StockLensContentScript {
     this.overlay = new StockLensOverlay();
     this.overlay.attach();
 
+    // Setup screener UI
+    this.screenerUI.attach();
+    this.screenerBuilder.attach();
+    this.setupScreenerCallbacks();
+
     // Listen for timeframe changes from overlay
     window.addEventListener('stocklens-timeframe-change', (e: any) => {
       this.currentTimeframe = e.detail.timeframe as Timeframe;
       if (this.currentTicker) {
         this.scanTicker(this.currentTicker);
       }
+    });
+
+    // Listen for screener toggle from keyboard shortcut or message
+    window.addEventListener('stocklens-toggle-screener', () => {
+      this.screenerUI.toggle();
     });
 
     // Start monitoring for ticker changes
@@ -126,6 +146,13 @@ class StockLensContentScript {
       // Update overlay with reports array and setup card
       this.overlay.updateScanResults([report], report.setupCard || null);
 
+      // Register this stock page with screener manager
+      const ohlcvRecord: Record<Timeframe, any[]> = {
+        '1D': [], '1W': [], '1M': [], '3M': [], '1Y': []
+      };
+      ohlcvRecord[this.currentTimeframe] = ohlcv;
+      this.registerStockPage(ticker, report, ohlcvRecord);
+
       // Check for alerts
       this.checkAlerts(report);
 
@@ -133,6 +160,117 @@ class StockLensContentScript {
       console.error('[StockLens] Scan error:', error);
       this.overlay.showError('Failed to analyze. Try refreshing.');
     }
+  }
+
+  /**
+   * Register current stock page with screener manager
+   */
+  private registerStockPage(
+    ticker: string,
+    report: ScanReport,
+    ohlcvData: Record<Timeframe, any[]>
+  ): void {
+    const exchange = this.detectExchange();
+    
+    // Create complete OHLCV data record with all timeframes
+    const completeOhlcv: Record<Timeframe, any[]> = {
+      '1D': this.currentTimeframe === '1D' ? ohlcvData['1D'] || [] : [],
+      '1W': this.currentTimeframe === '1W' ? ohlcvData['1W'] || [] : [],
+      '1M': this.currentTimeframe === '1M' ? ohlcvData['1M'] || [] : [],
+      '3M': this.currentTimeframe === '3M' ? ohlcvData['3M'] || [] : [],
+      '1Y': this.currentTimeframe === '1Y' ? ohlcvData['1Y'] || [] : []
+    };
+    
+    // Set the current timeframe data
+    completeOhlcv[this.currentTimeframe] = ohlcvData[this.currentTimeframe] || [];
+    
+    this.screenerManager.addStockPage({
+      id: this.pageId,
+      ticker,
+      exchange,
+      url: window.location.href,
+      lastUpdated: Date.now(),
+      status: 'ready',
+      report,
+      ohlcvData: completeOhlcv
+    });
+
+    // Update screener UI with latest results
+    const screeners = this.screenerManager.getAllScreeners();
+    if (screeners.length > 0) {
+      const allResults = this.screenerManager.runAllScreeners();
+      const flatResults = Array.from(allResults.values()).flat();
+      this.screenerUI.updateResults(flatResults, screeners);
+    }
+  }
+
+  /**
+   * Detect exchange from URL
+   */
+  private detectExchange(): string {
+    const url = window.location.href;
+    if (url.includes('tradingview.com')) return 'TradingView';
+    if (url.includes('groww')) return 'Groww';
+    if (url.includes('zerodha') || url.includes('kite')) return 'Zerodha';
+    if (url.includes('nseindia')) return 'NSE';
+    if (url.includes('yahoo')) return 'Yahoo';
+    return 'Unknown';
+  }
+
+  /**
+   * Setup callbacks for screener UI actions
+   */
+  private setupScreenerCallbacks(): void {
+    // Handle screener builder save
+    this.screenerBuilder.setOnSave((config: ScreenerBuilderConfig) => {
+      const screener = this.screenerManager.createScreener(config.name, config.conditions);
+      
+      // Run screener and update UI
+      const results = this.screenerManager.runScreener(screener.id);
+      const screeners = this.screenerManager.getAllScreeners();
+      this.screenerUI.updateResults(results, screeners);
+      
+      // Show the results panel
+      this.screenerUI.show();
+    });
+
+    // Handle screener UI actions
+    this.screenerUI.setOnScreenerAction((action: string, data?: any) => {
+      switch (action) {
+        case 'new_screener':
+          this.screenerBuilder.show();
+          break;
+        
+        case 'export_csv': {
+          const screeners = this.screenerManager.getAllScreeners();
+          if (screeners.length > 0) {
+            const csv = this.screenerManager.exportToCSV(screeners[0].id);
+            this.downloadCSV(csv, `${screeners[0].name}_results.csv`);
+          }
+          break;
+        }
+        
+        case 'select_stock':
+          if (data?.ticker) {
+            console.log('[StockLens] User wants to view:', data.ticker);
+            // Could navigate to that stock or highlight it
+          }
+          break;
+      }
+    });
+  }
+
+  /**
+   * Download CSV file
+   */
+  private downloadCSV(csv: string, filename: string): void {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   private async fetchYahooData(
