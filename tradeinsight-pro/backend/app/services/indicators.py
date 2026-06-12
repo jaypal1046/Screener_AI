@@ -24,7 +24,7 @@ class IndicatorService:
         "ADX": {"category": "trend", "description": "Average Directional Index"},
         "Ichimoku": {"category": "trend", "description": "Ichimoku Cloud"},
         "ParabolicSAR": {"category": "trend", "description": "Parabolic SAR"},
-        "VWAP": {"category": "trend", "description": "Volume Weighted Average Price"},
+        "SuperTrend": {"category": "trend", "description": "SuperTrend Indicator"},
         
         # Momentum Indicators (8)
         "RSI": {"category": "momentum", "description": "Relative Strength Index"},
@@ -140,10 +140,10 @@ class IndicatorService:
             elif indicator_name == "BollingerBands":
                 bbands = ta.bbands(df["close"])
                 values = {
-                    "upper": bbands["BBU_5_2.0"].iloc[-1],
-                    "middle": bbands["BBM_5_2.0"].iloc[-1],
-                    "lower": bbands["BBL_5_2.0"].iloc[-1],
-                    "bandwidth": bbands["BBB_5_2.0"].iloc[-1]
+                    "upper": bbands["BBU_5_2.0_2.0"].iloc[-1],
+                    "middle": bbands["BBM_5_2.0_2.0"].iloc[-1],
+                    "lower": bbands["BBL_5_2.0_2.0"].iloc[-1],
+                    "bandwidth": bbands["BBB_5_2.0_2.0"].iloc[-1]
                 }
                 if df["close"].iloc[-1] > values["upper"]:
                     signal = "sell"
